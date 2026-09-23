@@ -1,0 +1,75 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Windows x64
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Clone NVIDIA NVAPI SDK
+        shell: pwsh
+        run: |
+          git clone --depth 1 https://github.com/NVIDIA/nvapi.git nvapi
+
+      - name: Build nvscale.exe
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set VSINSTALL=%%i
+
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+
+          if not exist dist mkdir dist
+
+          cl ^
+            /nologo ^
+            /EHsc ^
+            /std:c++17 ^
+            /O2 ^
+            /W4 ^
+            /DNDEBUG ^
+            /I nvapi ^
+            nvscale.cpp ^
+            /Fe:dist\nvscale.exe ^
+            /link ^
+            /LIBPATH:nvapi\amd64 ^
+            nvapi64.lib
+
+      - name: Show resulting binary
+        shell: pwsh
+        run: |
+          Get-Item dist/nvscale.exe | Format-List Name, Length, LastWriteTime
+
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+
+          gh release view $tag 2>$null
+
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag already exists, replacing nvscale.exe"
+            gh release upload $tag `
+              "dist/nvscale.exe#nvscale.exe - Windows x64" `
+              --clobber
+          }
+          else {
+            Write-Host "Creating release $tag"
+            gh release create $tag `
+              "dist/nvscale.exe#nvscale.exe - Windows x64" `
+              --verify-tag `
+              --generate-notes `
+              --title "nvscale $tag"
+          }
